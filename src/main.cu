@@ -139,18 +139,22 @@ __device__ int score_prefix_suffix(Address a, const char* prefix, int prefix_len
     return 1;
 }
 
-// For now, hardcode the prefix/suffix and their lengths.
-#define PREFIX_STR "dead"
-#define PREFIX_LEN 4
-#define SUFFIX_STR "beef"
-#define SUFFIX_LEN 4
+
+// Prefix/suffix for address matching (copied to device constant memory)
+__constant__ char device_prefix[64];
+__constant__ char device_suffix[64];
 
 __device__ void handle_output(int score_method, Address a, uint64_t key, bool inv) {
     int score = 0;
     if (score_method == 0) { score = score_leading_zeros(a); }
     else if (score_method == 1) { score = score_zero_bytes(a); }
     else if (score_method == 2) {
-        score = score_prefix_suffix(a, PREFIX_STR, PREFIX_LEN, SUFFIX_STR, SUFFIX_LEN);
+        // Use device_prefix/device_suffix and their actual lengths
+        int prefix_len = 0;
+        int suffix_len = 0;
+        while (prefix_len < 64 && device_prefix[prefix_len] != '\0') prefix_len++;
+        while (suffix_len < 64 && device_suffix[suffix_len] != '\0') suffix_len++;
+        score = score_prefix_suffix(a, device_prefix, prefix_len, device_suffix, suffix_len);
         // Only push if score > 0
         if (score > 0) {
             uint32_t idx = atomicAdd_ul(&device_memory[0], 1);
@@ -181,7 +185,11 @@ __device__ void handle_output2(int score_method, Address a, uint64_t key) {
     if (score_method == 0) { score = score_leading_zeros(a); }
     else if (score_method == 1) { score = score_zero_bytes(a); }
     else if (score_method == 2) {
-        score = score_prefix_suffix(a, PREFIX_STR, PREFIX_LEN, SUFFIX_STR, SUFFIX_LEN);
+        int prefix_len = 0;
+        int suffix_len = 0;
+        while (prefix_len < 64 && device_prefix[prefix_len] != '\0') prefix_len++;
+        while (suffix_len < 64 && device_suffix[suffix_len] != '\0') suffix_len++;
+        score = score_prefix_suffix(a, device_prefix, prefix_len, device_suffix, suffix_len);
         // Only push if score > 0
         if (score > 0) {
             uint32_t idx = atomicAdd_ul(&device_memory[0], 1);
@@ -601,11 +609,13 @@ void print_speeds(int num_devices, int* device_ids, double* speeds) {
 
 
 int main(int argc, char *argv[]) {
-    int score_method = -1; // 0 = leading zeroes, 1 = zeros
+    int score_method = -1; // 0 = leading zeroes, 1 = zeros, 2 = prefix/suffix
     int mode = 0; // 0 = address, 1 = contract, 2 = create2 contract, 3 = create3 proxy contract
     char* input_file = 0;
     char* input_address = 0;
     char* input_deployer_address = 0;
+    char* input_prefix = 0;
+    char* input_suffix = 0;
 
     int num_devices = 0;
     int device_ids[10];
@@ -641,6 +651,12 @@ int main(int argc, char *argv[]) {
         } else if  (strcmp(argv[i], "--work-scale") == 0 || strcmp(argv[i], "-w") == 0) {
             GRID_SIZE = 1U << atoi(argv[i + 1]);
             i += 2;
+        } else if (strcmp(argv[i], "--prefix") == 0 || strcmp(argv[i], "-p") == 0) {
+            input_prefix = argv[i + 1];
+            i += 2;
+        } else if (strcmp(argv[i], "--suffix") == 0 || strcmp(argv[i], "-s") == 0) {
+            input_suffix = argv[i + 1];
+            i += 2;
         } else {
             i++;
         }
@@ -673,6 +689,25 @@ int main(int argc, char *argv[]) {
         printf("You must specify a deployer address when using --contract3\n");
         return 1;
     }
+
+    // If either prefix or suffix is set, switch to prefix/suffix scoring method
+    if ((input_prefix && strlen(input_prefix) > 0) || (input_suffix && strlen(input_suffix) > 0)) {
+        score_method = 2;
+    }
+
+    // Copy prefix/suffix to device constant memory if set, otherwise set to empty string
+    char prefix_tmp[64] = {0};
+    char suffix_tmp[64] = {0};
+    if (input_prefix && strlen(input_prefix) > 0) {
+        strncpy(prefix_tmp, input_prefix, 63);
+        prefix_tmp[63] = '\0';
+    }
+    if (input_suffix && strlen(input_suffix) > 0) {
+        strncpy(suffix_tmp, input_suffix, 63);
+        suffix_tmp[63] = '\0';
+    }
+    cudaMemcpyToSymbol(device_prefix, prefix_tmp, 64, 0, cudaMemcpyHostToDevice);
+    cudaMemcpyToSymbol(device_suffix, suffix_tmp, 64, 0, cudaMemcpyHostToDevice);
 
 
 

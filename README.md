@@ -16,11 +16,14 @@ Vanity Eth Address is a tool to generate Ethereum addresses that match certain c
        (-b) --bytecode <filename>         File containing contract bytecode (only needed when using --contract2 or --contract3)
        (-a) --address <address>           Sender contract address (only needed when using --contract2 or --contract3)
       (-ad) --deployer-address <address>  Deployer contract address (only needed when using --contract3)
+       (-p) --prefix <hex>                Require address to start with <hex>
+       (-s) --suffix <hex>                Require address to end with <hex>
        (-w) --work-scale <num>            Defaults to 15. Scales the work done in each kernel. If your GPU finishes kernels within a few seconds, you may benefit from increasing this number.
 
 Examples:
     ./vanity-eth-address --zeros --device 0 --device 2 --work-scale 17
     ./vanity-eth-address --leading-zeros --contract2 --bytecode bytecode.txt --address 0x0000000000000000000000000000000000000000 --device 0
+    ./vanity-eth-address --device 0 --prefix dead --suffix beef
 ```
 
 ## Benchmarks
