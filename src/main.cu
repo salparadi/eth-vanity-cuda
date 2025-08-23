@@ -97,10 +97,71 @@ __device__ int score_leading_zeros(Address a) {
     #define atomicAdd_ul(a, b) atomicAdd(a, b)
 #endif
 
+__device__ int score_prefix_suffix(Address a, const char* prefix, int prefix_len, const char* suffix, int suffix_len) {
+    // Convert Address to hex string (40 chars)
+    char hex[41];
+    #pragma unroll
+    for (int i = 0; i < 5; i++) {
+        uint32_t val;
+        if (i == 0) val = a.a;
+        else if (i == 1) val = a.b;
+        else if (i == 2) val = a.c;
+        else if (i == 3) val = a.d;
+        else val = a.e;
+        // Write 8 hex chars for each uint32
+        #pragma unroll
+        for (int j = 0; j < 8; j++) {
+            int shift = 28 - j * 4;
+            int nibble = (val >> shift) & 0xF;
+            char c = (nibble < 10) ? ('0' + nibble) : ('a' + nibble - 10);
+            hex[i * 8 + j] = c;
+        }
+    }
+    hex[40] = '\0';
+    // Check prefix
+    bool prefix_match = true;
+    for (int i = 0; i < prefix_len; i++) {
+        if (hex[i] != prefix[i]) {
+            prefix_match = false;
+            break;
+        }
+    }
+    if (!prefix_match) return 0;
+    // Check suffix
+    bool suffix_match = true;
+    for (int i = 0; i < suffix_len; i++) {
+        if (hex[40 - suffix_len + i] != suffix[i]) {
+            suffix_match = false;
+            break;
+        }
+    }
+    if (!suffix_match) return 0;
+    return 1;
+}
+
+// For now, hardcode the prefix/suffix and their lengths.
+#define PREFIX_STR "dead"
+#define PREFIX_LEN 4
+#define SUFFIX_STR "beef"
+#define SUFFIX_LEN 4
+
 __device__ void handle_output(int score_method, Address a, uint64_t key, bool inv) {
     int score = 0;
     if (score_method == 0) { score = score_leading_zeros(a); }
     else if (score_method == 1) { score = score_zero_bytes(a); }
+    else if (score_method == 2) {
+        score = score_prefix_suffix(a, PREFIX_STR, PREFIX_LEN, SUFFIX_STR, SUFFIX_LEN);
+        // Only push if score > 0
+        if (score > 0) {
+            uint32_t idx = atomicAdd_ul(&device_memory[0], 1);
+            if (idx < OUTPUT_BUFFER_SIZE) {
+                device_memory[2 + idx] = key;
+                device_memory[OUTPUT_BUFFER_SIZE + 2 + idx] = score;
+                device_memory[OUTPUT_BUFFER_SIZE * 2 + 2 + idx] = inv;
+            }
+        }
+        return;
+    }
 
     if (score >= device_memory[1]) {
         atomicMax_ul(&device_memory[1], score);
@@ -119,6 +180,18 @@ __device__ void handle_output2(int score_method, Address a, uint64_t key) {
     int score = 0;
     if (score_method == 0) { score = score_leading_zeros(a); }
     else if (score_method == 1) { score = score_zero_bytes(a); }
+    else if (score_method == 2) {
+        score = score_prefix_suffix(a, PREFIX_STR, PREFIX_LEN, SUFFIX_STR, SUFFIX_LEN);
+        // Only push if score > 0
+        if (score > 0) {
+            uint32_t idx = atomicAdd_ul(&device_memory[0], 1);
+            if (idx < OUTPUT_BUFFER_SIZE) {
+                device_memory[2 + idx] = key;
+                device_memory[OUTPUT_BUFFER_SIZE + 2 + idx] = score;
+            }
+        }
+        return;
+    }
 
     if (score >= device_memory[1]) {
         atomicMax_ul(&device_memory[1], score);
