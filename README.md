@@ -1,6 +1,8 @@
 # Vanity Eth Address
 Vanity Eth Address is a tool to generate Ethereum addresses that match certain criteria, accelerated with NVIDIA CUDA-enabled GPUs.
 
+This project is a CUDA-accelerated Ethereum vanity address generator written in C. It utilizes NVIDIA GPUs to brute-force Ethereum addresses that match user-defined patterns, including both prefixes and suffixes. Designed for high performance, the tool can test billions of candidate keys per second, making it practical to generate customized Ethereum addresses that would be computationally expensive to obtain with CPU-only methods.
+
 ## Compilation
 
 Set required PATH:
