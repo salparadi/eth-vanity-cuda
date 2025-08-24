@@ -149,6 +149,7 @@ __device__ void handle_output(int score_method, Address a, uint64_t key, bool in
     if (score_method == 0) { score = score_leading_zeros(a); }
     else if (score_method == 1) { score = score_zero_bytes(a); }
     else if (score_method == 2) {
+        // printf("Brute-forcing for Prefix & Suffix");
         // Use device_prefix/device_suffix and their actual lengths
         int prefix_len = 0;
         int suffix_len = 0;
@@ -668,8 +669,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (score_method == -1) {
-        printf("No scoring method was specified\n");
-        return 1;
+        printf("Scoring method was not specified. Defaulting to 2.\n");
     }
 
     if (mode == 2 && !input_file) {
