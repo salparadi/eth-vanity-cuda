@@ -29,6 +29,7 @@
 #include <chrono>
 #include <fstream>
 #include <vector>
+#include <ctype.h>
 
 #include "secure_rand.h"
 #include "structures.h"
@@ -653,9 +654,17 @@ int main(int argc, char *argv[]) {
             i += 2;
         } else if (strcmp(argv[i], "--prefix") == 0 || strcmp(argv[i], "-p") == 0) {
             input_prefix = argv[i + 1];
+            // Convert input_prefix to lowercase
+            for (char* p = input_prefix; *p; ++p) {
+                *p = tolower(*p);
+            }
             i += 2;
         } else if (strcmp(argv[i], "--suffix") == 0 || strcmp(argv[i], "-s") == 0) {
             input_suffix = argv[i + 1];
+            // Convert input_suffix to lowercase
+            for (char* p = input_suffix; *p; ++p) {
+                *p = tolower(*p);
+            }
             i += 2;
         } else {
             i++;
