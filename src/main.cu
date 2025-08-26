@@ -99,6 +99,8 @@ __device__ int score_leading_zeros(Address a) {
 #endif
 
 __device__ int score_prefix_suffix(Address a, const char* prefix, int prefix_len, const char* suffix, int suffix_len) {
+    // printf("Prefix: %s Suffix: %s\n", prefix, suffix);
+
     // Convert Address to hex string (40 chars)
     char hex[41];
     #pragma unroll
@@ -678,7 +680,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (score_method == -1) {
-        printf("Scoring method was not specified. Defaulting to 2.\n");
+        printf("Scoring method was not specified. Defaulting to 2. Mode: %d\n", mode);
     }
 
     if (mode == 2 && !input_file) {
@@ -884,6 +886,8 @@ int main(int argc, char *argv[]) {
                                 printf("Elapsed: %06u Score: %02u Private Key: 0x%08x%08x%08x%08x%08x%08x%08x%08x Address: 0x%08x%08x%08x%08x%08x\n", (uint32_t)time, score, k.a, k.b, k.c, k.d, k.e, k.f, k.g, k.h, a.a, a.b, a.c, a.d, a.e);
                             } else if (mode == 2 || mode == 3) {
                                 printf("Elapsed: %06u Score: %02u Salt: 0x%08x%08x%08x%08x%08x%08x%08x%08x Address: 0x%08x%08x%08x%08x%08x\n", (uint32_t)time, score, k.a, k.b, k.c, k.d, k.e, k.f, k.g, k.h, a.a, a.b, a.c, a.d, a.e);
+                            } else {
+                                printf("Final mode%d", mode);
                             }
                         }
 
