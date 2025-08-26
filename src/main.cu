@@ -888,6 +888,7 @@ int main(int argc, char *argv[]) {
                         printf("[DEBUG] Results count: %d\n", m.results_count);
                         Address* addresses = new Address[m.results_count];
                         for (int i = 0; i < m.results_count; i++) {
+
                             if (mode == 0) {
                                 CurvePoint p = cpu_point_multiply(G, m.results[i]);
                                 addresses[i] = cpu_calculate_address(p.x, p.y);
@@ -904,6 +905,7 @@ int main(int argc, char *argv[]) {
                         }
 
                         for (int i = 0; i < m.results_count; i++) {
+                            printf("Results count loop happened")
                             _uint256 k = m.results[i];
                             int score = m.scores[i];
                             Address a = addresses[i];
