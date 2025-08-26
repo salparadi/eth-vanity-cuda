@@ -30,7 +30,6 @@
 #include <fstream>
 #include <vector>
 #include <ctype.h>
-#include <stdio.h>
 
 #include "secure_rand.h"
 #include "structures.h"
@@ -100,8 +99,8 @@ __device__ int score_leading_zeros(Address a) {
 #endif
 
 __device__ int score_prefix_suffix(Address a, const char* prefix, int prefix_len, const char* suffix, int suffix_len) {
-    // DEBUG: print prefix_len and suffix_len when called
     printf("[DEBUG] score_prefix_suffix called with prefix_len=%d, suffix_len=%d\n", prefix_len, suffix_len);
+    // printf("Prefix: %s Suffix: %s\n", prefix, suffix);
 
     // Convert Address to hex string (40 chars)
     char hex[41];
@@ -676,7 +675,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Debug print input_prefix and input_suffix after argument parsing, before validation/initialization
     if (input_prefix) {
         printf("[DEBUG] Input prefix: %s (length: %zu)\n", input_prefix, strlen(input_prefix));
     }
@@ -685,7 +683,6 @@ int main(int argc, char *argv[]) {
     }
 
     if (num_devices == 0) {
-        printf("[DEBUG] Exiting early due to no devices specified\n");
         printf("No devices were specified\n");
         return 1;
     }
@@ -695,23 +692,19 @@ int main(int argc, char *argv[]) {
     }
 
     if (mode == 2 && !input_file) {
-        printf("[DEBUG] Exiting early due to missing contract bytecode for --contract2\n");
         printf("You must specify contract bytecode when using --contract2\n");
         return 1;
     }
 
     if ((mode == 2 || mode == 3) && !input_address) {
-        printf("[DEBUG] Exiting early due to missing origin address for --contract2/3\n");
         printf("You must specify an origin address when using --contract2\n");
         return 1;
     } else if ((mode == 2 || mode == 3) && strlen(input_address) != 40 && strlen(input_address) != 42) {
-        printf("[DEBUG] Exiting early due to origin address wrong length\n");
         printf("The origin address must be 40 characters long\n");
         return 1;
     }
 
     if ((mode == 2 || mode == 3) && !input_deployer_address) {
-        printf("[DEBUG] Exiting early due to missing deployer address for --contract3\n");
         printf("You must specify a deployer address when using --contract3\n");
         return 1;
     }
@@ -720,6 +713,8 @@ int main(int argc, char *argv[]) {
     if ((input_prefix && strlen(input_prefix) > 0) || (input_suffix && strlen(input_suffix) > 0)) {
         score_method = 2;
     }
+
+    printf("[DEBUG] Score method selected: %d (mode: %d)\n", score_method, mode);
 
     // Copy prefix/suffix to device constant memory if set, otherwise set to empty string
     char prefix_tmp[64] = {0};
@@ -735,15 +730,11 @@ int main(int argc, char *argv[]) {
     cudaMemcpyToSymbol(device_prefix, prefix_tmp, 64, 0, cudaMemcpyHostToDevice);
     cudaMemcpyToSymbol(device_suffix, suffix_tmp, 64, 0, cudaMemcpyHostToDevice);
 
-    // Debug print the chosen score_method after all logic is finalized
-    printf("[DEBUG] Score method selected: %d\n", score_method);
-
 
 
     for (int i = 0; i < num_devices; i++) {
         cudaError_t e = cudaSetDevice(device_ids[i]);
         if (e != cudaSuccess) {
-            printf("[DEBUG] Exiting early due to cudaSetDevice failure for device %d\n", device_ids[i]);
             printf("Could not detect device %d\n", device_ids[i]);
             return 1;
         }
@@ -754,7 +745,6 @@ int main(int argc, char *argv[]) {
     if (mode == 2 || mode == 3) {
         std::ifstream infile(input_file, std::ios::binary);
         if (!infile.is_open()) {
-            printf("[DEBUG] Exiting early due to failed to open bytecode file\n");
             printf("Failed to open the bytecode file.\n");
             return 1;
         }
@@ -768,14 +758,12 @@ int main(int argc, char *argv[]) {
         }
 
         if (file_size & 1) {
-            printf("[DEBUG] Exiting early due to invalid bytecode file size\n");
             printf("Invalid bytecode in file.\n");
             return 1;
         }
 
         uint8_t* bytecode = new uint8_t[24576];
         if (bytecode == 0) {
-            printf("[DEBUG] Exiting early due to error allocating memory for bytecode\n");
             printf("Error while allocating memory. Perhaps you are out of memory?");
             return 1;
         }
@@ -787,7 +775,6 @@ int main(int argc, char *argv[]) {
             if (i == 0) {
                 prefix = byte[0] == '0' && byte[1] == 'x';
                 if ((file_size >> 1) > (prefix ? 24577 : 24576)) {
-                    printf("[DEBUG] Exiting early due to invalid bytecode in file (too long)\n");
                     printf("Invalid bytecode in file.\n");
                     delete[] bytecode;
                     return 1;
@@ -796,7 +783,6 @@ int main(int argc, char *argv[]) {
             }
 
             if (nothex(byte[0]) || nothex(byte[1])) {
-                printf("[DEBUG] Exiting early due to invalid bytecode hex in file\n");
                 printf("Invalid bytecode in file.\n");
                 delete[] bytecode;
                 return 1;
@@ -818,7 +804,6 @@ int main(int argc, char *argv[]) {
         #define round(i, offset) \
         strncpy(substr, input_address + offset * 8, 8); \
         if (nothex(substr[0]) || nothex(substr[1]) || nothex(substr[2]) || nothex(substr[3]) || nothex(substr[4]) || nothex(substr[5]) || nothex(substr[6]) || nothex(substr[7])) { \
-            printf("[DEBUG] Exiting early due to invalid origin address\n"); \
             printf("Invalid origin address.\n"); \
             return 1; \
         } \
@@ -843,7 +828,6 @@ int main(int argc, char *argv[]) {
         #define round(i, offset) \
         strncpy(substr, input_deployer_address + offset * 8, 8); \
         if (nothex(substr[0]) || nothex(substr[1]) || nothex(substr[2]) || nothex(substr[3]) || nothex(substr[4]) || nothex(substr[5]) || nothex(substr[6]) || nothex(substr[7])) { \
-            printf("[DEBUG] Exiting early due to invalid deployer address\n"); \
             printf("Invalid deployer address.\n"); \
             return 1; \
         } \
@@ -885,7 +869,6 @@ int main(int argc, char *argv[]) {
 
                     printf("\r");
                     if (m.results_count != 0) {
-                        printf("[DEBUG] Results count: %d\n", m.results_count);
                         Address* addresses = new Address[m.results_count];
                         for (int i = 0; i < m.results_count; i++) {
                             if (mode == 0) {
