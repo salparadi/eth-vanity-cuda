@@ -101,7 +101,7 @@ __device__ int score_leading_zeros(Address a) {
 
 __device__ int score_prefix_suffix(Address a, const char* prefix, int prefix_len, const char* suffix, int suffix_len) {
     // DEBUG: print prefix_len and suffix_len when called
-    printf("[DEBUG] score_prefix_suffix called with prefix_len=%d, suffix_len=%d\n", prefix_len, suffix_len);
+    // printf("[DEBUG] score_prefix_suffix called with prefix_len=%d, suffix_len=%d\n", prefix_len, suffix_len);
 
     // Convert Address to hex string (40 chars)
     char hex[41];
@@ -288,7 +288,7 @@ void host_thread(int device, int device_index, int score_method, int mode, Addre
     output_buffer3_host = output_buffer2_host + OUTPUT_BUFFER_SIZE;
 
     output_counter_host[0] = 0;
-    max_score_host[0] = 2;
+    max_score_host[0] = (score_method == 2) ? 1 : 2;
     gpu_assert(cudaMemcpyToSymbol(device_memory, device_memory_host, 2 * sizeof(uint64_t)));
     gpu_assert(cudaDeviceSynchronize())
 
@@ -602,6 +602,7 @@ void host_thread(int device, int device_index, int score_method, int mode, Addre
 
 
 void print_speeds(int num_devices, int* device_ids, double* speeds) {
+
     double total = 0.0;
     for (int i = 0; i < num_devices; i++) {
         total += speeds[i];
@@ -882,11 +883,12 @@ int main(int argc, char *argv[]) {
 
                 if (m.status == 0) {
                     speeds[device_index] = m.speed;
-
+                    // printf("[DEBUG] Some crazy execution about to happen.\n");
                     printf("\r");
                     if (m.results_count != 0) {
-                        printf("[DEBUG] Results count: %d\n", m.results_count);
+                        // printf("[DEBUG] Results count: %d\n", m.results_count);
                         Address* addresses = new Address[m.results_count];
+                        // printf("%s\n", addresses);
                         for (int i = 0; i < m.results_count; i++) {
 
                             if (mode == 0) {
@@ -905,7 +907,7 @@ int main(int argc, char *argv[]) {
                         }
 
                         for (int i = 0; i < m.results_count; i++) {
-                            printf("Results count loop happened")
+                            // printf("Results count loop happened");
                             _uint256 k = m.results[i];
                             int score = m.scores[i];
                             Address a = addresses[i];
