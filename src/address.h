@@ -6,13 +6,17 @@
 #include "math.h"
 
 
-__global__ void __launch_bounds__(BLOCK_SIZE) gpu_address_init(CurvePoint* block_offsets, CurvePoint* offsets) {
+__global__ void __launch_bounds__(BLOCK_SIZE) gpu_address_init(CurvePoint* block_offsets, CurvePoint* offsets, uint32_t grid_size) {
     bool b = __isGlobal(block_offsets);
     __builtin_assume(b);
     bool b2 = __isGlobal(offsets);
     __builtin_assume(b2);
 
     uint64_t thread_id = (uint64_t)threadIdx.x + (uint64_t)blockIdx.x * (uint64_t)BLOCK_SIZE;
+
+    if (thread_id >= grid_size) {
+        return;
+    }
 
     _uint256 z[BLOCK_SIZE];
     z[0] = sub_256_mod_p(block_offsets[thread_id].x, thread_offsets[0].x);

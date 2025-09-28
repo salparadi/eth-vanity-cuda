@@ -29,6 +29,9 @@
 #include <chrono>
 #include <fstream>
 #include <vector>
+#include <array>
+#include <algorithm>
+#include <cstring>
 #include <ctype.h>
 #include <stdio.h>
 
@@ -264,8 +267,9 @@ uint64_t milliseconds() {
 }
 
 
-void host_thread(int device, int device_index, int score_method, int mode, Address origin_address, Address deployer_address, _uint256 bytecode) {
-    uint64_t GRID_WORK = ((uint64_t)BLOCK_SIZE * (uint64_t)GRID_SIZE * (uint64_t)THREAD_WORK);
+void host_thread(int device, int device_index, int score_method, int mode, Address origin_address, Address deployer_address, _uint256 bytecode, const char* prefix, const char* suffix) {
+    const uint32_t grid_size_clamped = std::max<uint32_t>(1U, GRID_SIZE);
+    const uint64_t GRID_WORK = static_cast<uint64_t>(BLOCK_SIZE) * static_cast<uint64_t>(grid_size_clamped) * static_cast<uint64_t>(THREAD_WORK);
 
     CurvePoint* block_offsets = 0;
     CurvePoint* offsets = 0;
@@ -279,6 +283,8 @@ void host_thread(int device, int device_index, int score_method, int mode, Addre
     uint64_t* output_buffer3_host;
 
     gpu_assert(cudaSetDevice(device));
+    gpu_assert(cudaMemcpyToSymbol(device_prefix, prefix, 64, 0, cudaMemcpyHostToDevice));
+    gpu_assert(cudaMemcpyToSymbol(device_suffix, suffix, 64, 0, cudaMemcpyHostToDevice));
 
     gpu_assert(cudaHostAlloc(&device_memory_host, (2 + OUTPUT_BUFFER_SIZE * 3) * sizeof(uint64_t), cudaHostAllocDefault))
     output_counter_host = device_memory_host;
@@ -294,15 +300,14 @@ void host_thread(int device, int device_index, int score_method, int mode, Addre
 
 
     if (mode == 0 || mode == 1) {
-        gpu_assert(cudaMalloc(&block_offsets, GRID_SIZE * sizeof(CurvePoint)))
-        gpu_assert(cudaMalloc(&offsets, (uint64_t)GRID_SIZE * BLOCK_SIZE * sizeof(CurvePoint)))
-        thread_offsets_host = new CurvePoint[BLOCK_SIZE];
+        gpu_assert(cudaMalloc(&block_offsets, grid_size_clamped * sizeof(CurvePoint)))
+        gpu_assert(cudaMalloc(&offsets, static_cast<uint64_t>(grid_size_clamped) * BLOCK_SIZE * sizeof(CurvePoint)))
         gpu_assert(cudaHostAlloc(&thread_offsets_host, BLOCK_SIZE * sizeof(CurvePoint), cudaHostAllocWriteCombined))
     }
 
     _uint256 max_key;
     if (mode == 0 || mode == 1) {
-        _uint256 GRID_WORK = cpu_mul_256_mod_p(cpu_mul_256_mod_p(_uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK}, _uint256{0, 0, 0, 0, 0, 0, 0, BLOCK_SIZE}), _uint256{0, 0, 0, 0, 0, 0, 0, GRID_SIZE});
+        _uint256 GRID_WORK = cpu_mul_256_mod_p(cpu_mul_256_mod_p(_uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK}, _uint256{0, 0, 0, 0, 0, 0, 0, BLOCK_SIZE}), _uint256{0, 0, 0, 0, 0, 0, 0, grid_size_clamped});
         max_key = _uint256{0x7FFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x5D576E73, 0x57A4501D, 0xDFE92F46, 0x681B20A0};
         max_key = cpu_sub_256(max_key, GRID_WORK);
         max_key = cpu_sub_256(max_key, _uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK});
@@ -316,16 +321,16 @@ void host_thread(int device, int device_index, int score_method, int mode, Addre
     int status;
     if (mode == 0 || mode == 1) {
         status = generate_secure_random_key(base_random_key, max_key, 255);
-        random_key_increment = cpu_mul_256_mod_p(cpu_mul_256_mod_p(uint32_to_uint256(BLOCK_SIZE), uint32_to_uint256(GRID_SIZE)), uint32_to_uint256(THREAD_WORK));
+        random_key_increment = cpu_mul_256_mod_p(cpu_mul_256_mod_p(uint32_to_uint256(BLOCK_SIZE), uint32_to_uint256(grid_size_clamped)), uint32_to_uint256(THREAD_WORK));
     } else if (mode == 2 || mode == 3) {
         status = generate_secure_random_key(base_random_key, max_key, 256);
-        random_key_increment = cpu_mul_256_mod_p(cpu_mul_256_mod_p(uint32_to_uint256(BLOCK_SIZE), uint32_to_uint256(GRID_SIZE)), uint32_to_uint256(THREAD_WORK));
+        random_key_increment = cpu_mul_256_mod_p(cpu_mul_256_mod_p(uint32_to_uint256(BLOCK_SIZE), uint32_to_uint256(grid_size_clamped)), uint32_to_uint256(THREAD_WORK));
         base_random_key.h &= ~(THREAD_WORK - 1);
     }
 
     if (status) {
         message_queue_mutex.lock();
-        message_queue.push(Message{milliseconds(), 10 + status});
+        message_queue.push(Message{milliseconds(), 10 + status, device_index});
         message_queue_mutex.unlock();
         return;
     }
@@ -341,14 +346,14 @@ void host_thread(int device, int device_index, int score_method, int mode, Addre
         gpu_assert(cudaMemcpyToSymbol(addends, addends_host, (THREAD_WORK - 1) * sizeof(CurvePoint)))
         delete[] addends_host;
 
-        CurvePoint* block_offsets_host = new CurvePoint[GRID_SIZE];
+        CurvePoint* block_offsets_host = new CurvePoint[grid_size_clamped];
         CurvePoint block_offset = cpu_point_multiply(G, _uint256{0, 0, 0, 0, 0, 0, 0, THREAD_WORK * BLOCK_SIZE});
         p = G;
-        for (int i = 0; i < GRID_SIZE; i++) {
+        for (uint32_t i = 0; i < grid_size_clamped; i++) {
             block_offsets_host[i] = p;
             p = cpu_point_add(p, block_offset);
         }
-        gpu_assert(cudaMemcpy(block_offsets, block_offsets_host, GRID_SIZE * sizeof(CurvePoint), cudaMemcpyHostToDevice))
+        gpu_assert(cudaMemcpy(block_offsets, block_offsets_host, grid_size_clamped * sizeof(CurvePoint), cudaMemcpyHostToDevice))
         delete[] block_offsets_host;
     }
 
@@ -366,9 +371,9 @@ void host_thread(int device, int device_index, int score_method, int mode, Addre
         while (true) {
             if (!first_iteration) {
                 if (mode == 0) {
-                    gpu_address_work<<<GRID_SIZE, BLOCK_SIZE, 0, streams[0]>>>(score_method, offsets);
+                    gpu_address_work<<<grid_size_clamped, BLOCK_SIZE, 0, streams[0]>>>(score_method, offsets);
                 } else {
-                    gpu_contract_address_work<<<GRID_SIZE, BLOCK_SIZE, 0, streams[0]>>>(score_method, offsets);
+                    gpu_contract_address_work<<<grid_size_clamped, BLOCK_SIZE, 0, streams[0]>>>(score_method, offsets);
                 }
             }
 
@@ -395,7 +400,8 @@ void host_thread(int device, int device_index, int score_method, int mode, Addre
             }
             start_time = milliseconds();
 
-            gpu_address_init<<<GRID_SIZE/BLOCK_SIZE, BLOCK_SIZE, 0, streams[0]>>>(block_offsets, offsets);
+            const uint32_t init_grid = std::max<uint32_t>(1U, (grid_size_clamped + BLOCK_SIZE - 1) / BLOCK_SIZE);
+            gpu_address_init<<<init_grid, BLOCK_SIZE, 0, streams[0]>>>(block_offsets, offsets, grid_size_clamped);
             if (!first_iteration) {
                 gpu_assert(cudaMemcpyFromSymbolAsync(device_memory_host, device_memory, (2 + OUTPUT_BUFFER_SIZE * 3) * sizeof(uint64_t), 0, cudaMemcpyDeviceToHost, streams[1]))
                 gpu_assert(cudaStreamSynchronize(streams[1]))
@@ -468,7 +474,7 @@ void host_thread(int device, int device_index, int score_method, int mode, Addre
     if (mode == 2) {
         while (true) {
             uint64_t start_time = milliseconds();
-            gpu_contract2_address_work<<<GRID_SIZE, BLOCK_SIZE>>>(score_method, origin_address, random_key, bytecode);
+            gpu_contract2_address_work<<<grid_size_clamped, BLOCK_SIZE>>>(score_method, origin_address, random_key, bytecode);
 
             gpu_assert(cudaDeviceSynchronize())
             gpu_assert(cudaMemcpyFromSymbol(device_memory_host, device_memory, (2 + OUTPUT_BUFFER_SIZE * 3) * sizeof(uint64_t)))
@@ -535,7 +541,7 @@ void host_thread(int device, int device_index, int score_method, int mode, Addre
     if (mode == 3) {
         while (true) {
             uint64_t start_time = milliseconds();
-            gpu_contract3_address_work<<<GRID_SIZE, BLOCK_SIZE>>>(score_method, origin_address, deployer_address, random_key, bytecode);
+            gpu_contract3_address_work<<<grid_size_clamped, BLOCK_SIZE>>>(score_method, origin_address, deployer_address, random_key, bytecode);
 
             gpu_assert(cudaDeviceSynchronize())
             gpu_assert(cudaMemcpyFromSymbol(device_memory_host, device_memory, (2 + OUTPUT_BUFFER_SIZE * 3) * sizeof(uint64_t)))
@@ -601,7 +607,7 @@ void host_thread(int device, int device_index, int score_method, int mode, Addre
 }
 
 
-void print_speeds(int num_devices, int* device_ids, double* speeds) {
+void print_speeds(int num_devices, int* device_ids, const std::vector<double>& speeds) {
 
     double total = 0.0;
     for (int i = 0; i < num_devices; i++) {
@@ -722,20 +728,6 @@ int main(int argc, char *argv[]) {
         score_method = 2;
     }
 
-    // Copy prefix/suffix to device constant memory if set, otherwise set to empty string
-    char prefix_tmp[64] = {0};
-    char suffix_tmp[64] = {0};
-    if (input_prefix && strlen(input_prefix) > 0) {
-        strncpy(prefix_tmp, input_prefix, 63);
-        prefix_tmp[63] = '\0';
-    }
-    if (input_suffix && strlen(input_suffix) > 0) {
-        strncpy(suffix_tmp, input_suffix, 63);
-        suffix_tmp[63] = '\0';
-    }
-    cudaMemcpyToSymbol(device_prefix, prefix_tmp, 64, 0, cudaMemcpyHostToDevice);
-    cudaMemcpyToSymbol(device_suffix, suffix_tmp, 64, 0, cudaMemcpyHostToDevice);
-
     // Debug print the chosen score_method after all logic is finalized
     printf("[DEBUG] Score method selected: %d\n", score_method);
 
@@ -781,7 +773,8 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        char byte[2];
+        char byte[3];
+        byte[2] = '\0';
         bool prefix = false;
         for (int i = 0; i < (file_size >> 1); i++) {
             infile.read((char*)&byte, 2);
@@ -815,6 +808,7 @@ int main(int argc, char *argv[]) {
             input_address += 2;
         }
         char substr[9];
+        substr[8] = '\0';
 
         #define round(i, offset) \
         strncpy(substr, input_address + offset * 8, 8); \
@@ -840,6 +834,7 @@ int main(int argc, char *argv[]) {
             input_deployer_address += 2;
         }
         char substr[9];
+        substr[8] = '\0';
 
         #define round(i, offset) \
         strncpy(substr, input_deployer_address + offset * 8, 8); \
@@ -861,95 +856,107 @@ int main(int argc, char *argv[]) {
     #undef nothex
 
 
+    std::array<char, 64> prefix_copy{};
+    std::array<char, 64> suffix_copy{};
+    if (input_prefix && strlen(input_prefix) > 0) {
+        std::strncpy(prefix_copy.data(), input_prefix, prefix_copy.size() - 1);
+        prefix_copy.back() = '\0';
+    }
+    if (input_suffix && strlen(input_suffix) > 0) {
+        std::strncpy(suffix_copy.data(), input_suffix, suffix_copy.size() - 1);
+        suffix_copy.back() = '\0';
+    }
+
     std::vector<std::thread> threads;
     uint64_t global_start_time = milliseconds();
     for (int i = 0; i < num_devices; i++) {
-        std::thread th(host_thread, device_ids[i], i, score_method, mode, origin_address, deployer_address, bytecode_hash);
+        std::thread th(host_thread, device_ids[i], i, score_method, mode, origin_address, deployer_address, bytecode_hash, prefix_copy.data(), suffix_copy.data());
         threads.push_back(move(th));
     }
 
-    double speeds[100];
+    std::vector<double> speeds(num_devices, 0.0);
     while(true) {
         message_queue_mutex.lock();
-        if (message_queue.size() == 0) {
+        if (message_queue.empty()) {
             message_queue_mutex.unlock();
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        } else {
-            while (!message_queue.empty()) {
-                Message m = message_queue.front();
-                message_queue.pop();
+            continue;
+        }
 
-                int device_index = m.device_index;
+        Message m = message_queue.front();
+        message_queue.pop();
+        message_queue_mutex.unlock();
 
-                if (m.status == 0) {
-                    speeds[device_index] = m.speed;
-                    // printf("[DEBUG] Some crazy execution about to happen.\n");
-                    printf("\r");
-                    if (m.results_count != 0) {
-                        // printf("[DEBUG] Results count: %d\n", m.results_count);
-                        Address* addresses = new Address[m.results_count];
-                        // printf("%s\n", addresses);
-                        for (int i = 0; i < m.results_count; i++) {
+        int device_index = m.device_index;
 
-                            if (mode == 0) {
-                                CurvePoint p = cpu_point_multiply(G, m.results[i]);
-                                addresses[i] = cpu_calculate_address(p.x, p.y);
-                            } else if (mode == 1) {
-                                CurvePoint p = cpu_point_multiply(G, m.results[i]);
-                                addresses[i] = cpu_calculate_contract_address(cpu_calculate_address(p.x, p.y));
-                            } else if (mode == 2) {
-                                addresses[i] = cpu_calculate_contract_address2(origin_address, m.results[i], bytecode_hash);
-                            } else if (mode == 3) {
-                                _uint256 salt = cpu_calculate_create3_salt(origin_address, m.results[i]);
-                                Address proxy = cpu_calculate_contract_address2(deployer_address, salt, bytecode_hash);
-                                addresses[i] = cpu_calculate_contract_address(proxy, 1);
-                            }
-                        }
-
-                        for (int i = 0; i < m.results_count; i++) {
-                            // printf("Results count loop happened");
-                            _uint256 k = m.results[i];
-                            int score = m.scores[i];
-                            Address a = addresses[i];
-                            uint64_t time = (m.time - global_start_time) / 1000;
-
-                            if (mode == 0 || mode == 1) {
-                                printf("Elapsed: %06u Score: %02u Private Key: 0x%08x%08x%08x%08x%08x%08x%08x%08x Address: 0x%08x%08x%08x%08x%08x\n", (uint32_t)time, score, k.a, k.b, k.c, k.d, k.e, k.f, k.g, k.h, a.a, a.b, a.c, a.d, a.e);
-                            } else if (mode == 2 || mode == 3) {
-                                printf("Elapsed: %06u Score: %02u Salt: 0x%08x%08x%08x%08x%08x%08x%08x%08x Address: 0x%08x%08x%08x%08x%08x\n", (uint32_t)time, score, k.a, k.b, k.c, k.d, k.e, k.f, k.g, k.h, a.a, a.b, a.c, a.d, a.e);
-                            } else {
-                                printf("Final mode%d", mode);
-                            }
-                        }
-
-                        delete[] addresses;
-                        delete[] m.results;
-                        delete[] m.scores;
-                    }
-                    print_speeds(num_devices, device_ids, speeds);
-                    fflush(stdout);
-                } else if (m.status == 1) {
-                    printf("\rCuda error %d on device %d. Device will halt work.\n", m.error, device_ids[device_index]);
-                    print_speeds(num_devices, device_ids, speeds);
-                    fflush(stdout);
-                } else if (m.status == 11) {
-                    printf("\rError from BCryptGenRandom. Device %d will halt work.", device_ids[device_index]);
-                    print_speeds(num_devices, device_ids, speeds);
-                    fflush(stdout);
-                } else if (m.status == 12) {
-                    printf("\rError while reading from /dev/urandom. Device %d will halt work.", device_ids[device_index]);
-                    print_speeds(num_devices, device_ids, speeds);
-                    fflush(stdout);
-                } else if (m.status == 13) {
-                    printf("\rError while opening /dev/urandom. Device %d will halt work.", device_ids[device_index]);
-                    print_speeds(num_devices, device_ids, speeds);
-                    fflush(stdout);
-                } else if (m.status == 100) {
-                    printf("\rError while allocating memory. Perhaps you are out of memory? Device %d will halt work.", device_ids[device_index]);
-                }
-                // break;
+        if (m.status == 0) {
+            if (device_index >= 0 && device_index < static_cast<int>(speeds.size())) {
+                speeds[device_index] = m.speed;
             }
-            message_queue_mutex.unlock();
+            printf("\r");
+            if (m.results_count != 0) {
+                Address* addresses = new Address[m.results_count];
+                for (int i = 0; i < m.results_count; i++) {
+
+                    if (mode == 0) {
+                        CurvePoint p = cpu_point_multiply(G, m.results[i]);
+                        addresses[i] = cpu_calculate_address(p.x, p.y);
+                    } else if (mode == 1) {
+                        CurvePoint p = cpu_point_multiply(G, m.results[i]);
+                        addresses[i] = cpu_calculate_contract_address(cpu_calculate_address(p.x, p.y));
+                    } else if (mode == 2) {
+                        addresses[i] = cpu_calculate_contract_address2(origin_address, m.results[i], bytecode_hash);
+                    } else if (mode == 3) {
+                        _uint256 salt = cpu_calculate_create3_salt(origin_address, m.results[i]);
+                        Address proxy = cpu_calculate_contract_address2(deployer_address, salt, bytecode_hash);
+                        addresses[i] = cpu_calculate_contract_address(proxy, 1);
+                    }
+                }
+
+                for (int i = 0; i < m.results_count; i++) {
+                    _uint256 k = m.results[i];
+                    int score = m.scores[i];
+                    Address a = addresses[i];
+                    uint64_t time = (m.time - global_start_time) / 1000;
+
+                    if (mode == 0 || mode == 1) {
+                        printf("Elapsed: %06u Score: %02u Private Key: 0x%08x%08x%08x%08x%08x%08x%08x%08x Address: 0x%08x%08x%08x%08x%08x\n", (uint32_t)time, score, k.a, k.b, k.c, k.d, k.e, k.f, k.g, k.h, a.a, a.b, a.c, a.d, a.e);
+                    } else if (mode == 2 || mode == 3) {
+                        printf("Elapsed: %06u Score: %02u Salt: 0x%08x%08x%08x%08x%08x%08x%08x%08x Address: 0x%08x%08x%08x%08x%08x\n", (uint32_t)time, score, k.a, k.b, k.c, k.d, k.e, k.f, k.g, k.h, a.a, a.b, a.c, a.d, a.e);
+                    } else {
+                        printf("Final mode%d", mode);
+                    }
+                }
+
+                delete[] addresses;
+                delete[] m.results;
+                delete[] m.scores;
+            }
+            print_speeds(num_devices, device_ids, speeds);
+            fflush(stdout);
+        } else if (m.status == 1) {
+            const int dev_id = (device_index >= 0 && device_index < num_devices) ? device_ids[device_index] : -1;
+            printf("\rCuda error %d on device %d. Device will halt work.\n", m.error, dev_id);
+            print_speeds(num_devices, device_ids, speeds);
+            fflush(stdout);
+        } else if (m.status == 11) {
+            const int dev_id = (device_index >= 0 && device_index < num_devices) ? device_ids[device_index] : -1;
+            printf("\rError from BCryptGenRandom. Device %d will halt work.", dev_id);
+            print_speeds(num_devices, device_ids, speeds);
+            fflush(stdout);
+        } else if (m.status == 12) {
+            const int dev_id = (device_index >= 0 && device_index < num_devices) ? device_ids[device_index] : -1;
+            printf("\rError while reading from /dev/urandom. Device %d will halt work.", dev_id);
+            print_speeds(num_devices, device_ids, speeds);
+            fflush(stdout);
+        } else if (m.status == 13) {
+            const int dev_id = (device_index >= 0 && device_index < num_devices) ? device_ids[device_index] : -1;
+            printf("\rError while opening /dev/urandom. Device %d will halt work.", dev_id);
+            print_speeds(num_devices, device_ids, speeds);
+            fflush(stdout);
+        } else if (m.status == 100) {
+            const int dev_id = (device_index >= 0 && device_index < num_devices) ? device_ids[device_index] : -1;
+            printf("\rError while allocating memory. Perhaps you are out of memory? Device %d will halt work.", dev_id);
         }
     }
 }
